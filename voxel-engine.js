@@ -36,9 +36,21 @@ function setText(id,t){let e=document.getElementById(id);if(e)e.textContent=t}
 function toast(s){let e=document.getElementById('toast');if(e){e.textContent=s;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1700)}}
 function ui(){setText('day','第 '+day+' 日');let t=String(hour|0).padStart(2,'0')+':'+String(Math.floor(hour%1*60)).padStart(2,'0');setText('clock',t);setText('timeLabel',t);let tm=document.getElementById('time');if(tm)tm.value=hour;let wb=document.getElementById('weatherBtn');if(wb)wb.textContent=wx[weather].i+' '+wx[weather].n+' ↻';setText('weatherText',wx[weather].i+' '+wx[weather].n)}
 function pick(px,py){let best=null,bd=1e9;for(let [k,t] of blocks){let [x,y,z]=k.split(',').map(Number);let p=project(x+.5,y+.5,z+.5),d=(p[0]-px)**2+(p[1]-py)**2;if(d<bd){bd=d;best={x,y,z,t}}}return bd<Math.min(W,H)**2*.018?best:null}
-function dig(b){if(!b)return;remove(b.x,b.y,b.z);if(['dirt','sand','stone'].includes(b.t))falling.push({x:b.x,y:b.y,z:b.z,t:b.t,vy:0,life:1});if(b.t==='grass')put(b.x,b.y-1,b.z,'dirt');toast('挖除 '+b.t+' 方塊');draw()}
-function place(b){if(!b)return;let x=b.x,y=b.y+1,z=b.z;if(!inside(x,y,z))return;put(x,y,z,'dirt');toast('放置泥土方塊');draw()}
-function actAt(px,py){let b=pick(px,py);if(!b)return;if(tool==='lower'||tool==='remove')dig(b);else if(tool==='raise')place(b);else if(tool==='inspect')toast(b.t+' 方塊｜高度 '+b.y);else if(tool==='level'){for(let x=0;x<N;x++)for(let z=0;z<N;z++){let top=topBlock(x,z);if(top&&top.y>b.y)remove(x,top.y,z);else if(top&&top.y<b.y)put(x,b.y,z,'grass')}draw()}else if(tool==='source'){fluids.set(KEY(b.x,b.y+1,b.z),1);toast('已放置水源')}else if(tool==='drain'){fluids.delete(KEY(b.x,b.y+1,b.z));drained++;toast('已排水')}else if(tool==='rain'){weather=3;toast('開始降雨')}else if(tool==='remove'){dig(b)}}
+function topBlock(x,z){for(let y=HMAX-1;y>=0;y--){let t=get(x,y,z);if(t)return{x,y,z,t}}return null}
+function stamp(cx,cz,baseY=0){
+ const r=Math.max(0,Math.floor((brush-1)/2));
+ for(let z=cz-r;z<=cz+r;z++)for(let x=cx-r;x<=cx+r;x++){
+  if(x<0||x>=N||z<0||z>=N)continue;
+  const top=topBlock(x,z);
+  if(tool==='lower'||tool==='remove'){if(top&&top.y>0){remove(x,top.y,z);if(['dirt','sand','stone'].includes(top.t))falling.push({x,y:top.y,z,t:top.t,vy:0,life:1});if(top.t==='grass'&&top.y>1)put(x,top.y-1,z,'dirt')}}
+  else if(tool==='raise'){const y=top?top.y+1:1;if(y<HMAX)put(x,y,z,'dirt')}
+  else if(tool==='level'){const target=Math.max(1,Math.min(HMAX-1,baseY));if(top){if(top.y>target){for(let y=top.y;y>target;y--)remove(x,y,z)}else if(top.y<target){for(let y=top.y+1;y<=target;y++)put(x,y,z,'dirt')}put(x,target,z,'grass')}else put(x,target,z,'grass')}
+  else if(tool==='source')fluids.set(KEY(x,(top?top.y:0)+1,z),1);
+  else if(tool==='drain'){fluids.delete(KEY(x,(top?top.y:0)+1,z));drained++}
+ }
+}
+function actAt(px,py){let b=pick(px,py);if(!b)return;if(tool==='inspect'){toast(b.t+' 方塊｜高度 '+b.y);return}if(tool==='rain'){weather=3;toast('開始降雨');return}stamp(b.x,b.z,b.y);draw()}
+function drawBrush(){if(!drag||!['lower','remove','raise','level'].includes(tool))return;const b=pick(drag.x,drag.y);if(!b)return;const r=Math.max(0,Math.floor((brush-1)/2));ctx.save();ctx.strokeStyle='#5ce8d4';ctx.lineWidth=2;ctx.fillStyle='rgba(92,232,212,.14)';for(let z=b.z-r;z<=b.z+r;z++)for(let x=b.x-r;x<=b.x+r;x++){if(x<0||x>=N||z<0||z>=N)continue;const top=topBlock(x,z),y=top?top.y+1:0;face([project(x,y,z),project(x+1,y,z),project(x+1,y,z+1),project(x,y,z+1)],'rgba(92,232,212,.13)','#5ce8d4')}ctx.restore()}
 function topBlock(x,z){for(let y=HMAX-1;y>=0;y--){let t=get(x,y,z);if(t)return{x,y,z,t}}return null}
 function physics(dt){let step=Math.min(.08,dt)*speed;
  // Gravity: unsupported loose blocks fall one voxel at a time and may land on cave roofs/floors.
@@ -60,10 +72,13 @@ function physics(dt){let step=Math.min(.08,dt)*speed;
 }
 function save(){localStorage.setItem('digflow-voxel-save',JSON.stringify({blocks:[...blocks],fluids:[...fluids],weather,day,hour,evap,drained,harvest}));toast('方塊世界已存檔')}
 function load(){try{let s=JSON.parse(localStorage.getItem('digflow-voxel-save'));blocks=new Map(s.blocks);fluids=new Map(s.fluids);weather=s.weather;day=s.day;hour=s.hour;evap=s.evap;drained=s.drained;harvest=s.harvest;ui();draw();toast('讀檔完成')}catch(e){toast('找不到存檔')}}
-canvas.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,px:e.clientX,py:e.clientY,moved:false,button:e.button};canvas.setPointerCapture(e.pointerId)});
-canvas.addEventListener('pointermove',e=>{if(!drag)return;let dx=e.clientX-drag.px,dy=e.clientY-drag.py;if(Math.abs(e.clientX-drag.x)+Math.abs(e.clientY-drag.y)>5)drag.moved=true;if(drag.moved){if(drag.button===2){panX+=dx;panY+=dy}else{rot+=dx*.008;panY+=dy*.18}drag.px=e.clientX;drag.py=e.clientY;draw()}});
-canvas.addEventListener('pointerup',e=>{if(drag&&!drag.moved)actAt(e.clientX,e.clientY);drag=null});canvas.addEventListener('contextmenu',e=>e.preventDefault());canvas.addEventListener('wheel',e=>{scale=Math.max(.55,Math.min(2.2,scale*(e.deltaY>0?.92:1.08)));draw();e.preventDefault()},{passive:false});
-document.querySelectorAll('[data-tool]').forEach(b=>b.addEventListener('click',()=>{tool=b.dataset.tool;document.querySelectorAll('[data-tool]').forEach(v=>v.classList.toggle('active',v.dataset.tool===tool));toast('工具：'+b.textContent)}));
+let lastStamp=null;
+canvas.style.touchAction='none';
+canvas.addEventListener('pointerdown',e=>{const b=pick(e.clientX,e.clientY);drag={x:e.clientX,y:e.clientY,px:e.clientX,py:e.clientY,moved:false,button:e.button,editing:e.button===0&&!!b&&['lower','remove','raise','level'].includes(tool)};lastStamp=null;canvas.setPointerCapture(e.pointerId);if(drag.editing&&b){stamp(b.x,b.z,b.y);lastStamp={x:b.x,z:b.z,y:b.y};draw()}});
+canvas.addEventListener('pointermove',e=>{if(!drag)return;let dx=e.clientX-drag.px,dy=e.clientY-drag.py;if(Math.abs(e.clientX-drag.x)+Math.abs(e.clientY-drag.y)>5)drag.moved=true;if(drag.editing){const b=pick(e.clientX,e.clientY);if(b){if(!lastStamp){stamp(b.x,b.z,b.y);lastStamp={x:b.x,z:b.z,y:b.y}}else{const steps=Math.max(Math.abs(b.x-lastStamp.x),Math.abs(b.z-lastStamp.z),1);for(let i=1;i<=steps;i++){const x=Math.round(lastStamp.x+(b.x-lastStamp.x)*i/steps),z=Math.round(lastStamp.z+(b.z-lastStamp.z)*i/steps);stamp(x,z,b.y)}lastStamp={x:b.x,z:b.z,y:b.y}}}drag.x=e.clientX;drag.y=e.clientY;drag.px=e.clientX;drag.py=e.clientY;draw();return}if(drag.moved){if(drag.button===2){panX+=dx;panY+=dy}else{rot+=dx*.008;panY+=dy*.18}drag.px=e.clientX;drag.py=e.clientY;draw()}});
+canvas.addEventListener('pointerup',e=>{if(drag&&!drag.moved&&!drag.editing)actAt(e.clientX,e.clientY);drag=null;lastStamp=null;draw()});canvas.addEventListener('pointercancel',()=>{drag=null;lastStamp=null;draw()});canvas.addEventListener('contextmenu',e=>e.preventDefault());canvas.addEventListener('wheel',e=>{scale=Math.max(.55,Math.min(2.2,scale*(e.deltaY>0?.92:1.08)));draw();e.preventDefault()},{passive:false});
+document.querySelectorAll('[data-tool]').forEach(b=>b.addEventListener('click',()=>{tool=b.dataset.tool;drag=null;lastStamp=null;document.querySelectorAll('[data-tool]').forEach(v=>v.classList.toggle('active',v.dataset.tool===tool));toast('工具：'+b.textContent)}));
+document.querySelectorAll('[data-brush]').forEach(b=>b.addEventListener('click',()=>{brush=+b.dataset.brush;document.querySelectorAll('[data-brush]').forEach(v=>v.classList.toggle('active',v===b));draw()}));
 document.querySelectorAll('[data-speed]').forEach(b=>b.addEventListener('click',()=>{speed=+b.dataset.speed;document.querySelectorAll('[data-speed]').forEach(v=>v.classList.toggle('active',v===b))}));
 let weatherBtn=document.querySelector('#weatherBtn');if(weatherBtn)weatherBtn.onclick=()=>{weather=(weather+1)%wx.length;ui();draw()};
 let pauseBtn=document.querySelector('#pause');if(pauseBtn)pauseBtn.onclick=()=>{paused=!paused;pauseBtn.textContent=paused?'▶':'Ⅱ'};
