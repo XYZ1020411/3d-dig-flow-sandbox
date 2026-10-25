@@ -1,7 +1,7 @@
 (()=>{'use strict';
 const canvas=document.querySelector('#world'),ctx=canvas.getContext('2d');
 const N=17,HMAX=9,KEY=(x,y,z)=>x+','+y+','+z;
-let W=innerWidth,H=innerHeight,dpr=1,scale=1,rot=0,panX=0,panY=20,tool='lower',brush=1,paused=false,speed=1,weather=0,day=1,hour=8,evap=0,drained=0,harvest=0,audioOn=true;
+let W=innerWidth,H=innerHeight,dpr=1,scale=1,rot=0,panX=0,panY=20,tool='lower',brushRadius=1,brushShape='cube',paused=false,speed=1,weather=0,day=1,hour=8,evap=0,drained=0,harvest=0,audioOn=true;
 let blocks=new Map(),fluids=new Map(),moist=new Map(),falling=[],objects=[],last=performance.now(),drag=null;
 const colors={grass:'#65a34e',dirt:'#936039',sand:'#d8c17a',stone:'#82898c',deep:'#48525c',bedrock:'#303941'};
 const wx=[{n:'晴天',i:'☀️',e:.0005},{n:'酷暑',i:'🔥',e:.0015},{n:'陰天',i:'☁️',e:.0002},{n:'小雨',i:'🌧️',e:.0004},{n:'暴雨',i:'🌩️',e:.0002}];
@@ -35,23 +35,46 @@ function draw(){let g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,weather
 function setText(id,t){let e=document.getElementById(id);if(e)e.textContent=t}
 function toast(s){let e=document.getElementById('toast');if(e){e.textContent=s;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1700)}}
 function ui(){setText('day','第 '+day+' 日');let t=String(hour|0).padStart(2,'0')+':'+String(Math.floor(hour%1*60)).padStart(2,'0');setText('clock',t);setText('timeLabel',t);let tm=document.getElementById('time');if(tm)tm.value=hour;let wb=document.getElementById('weatherBtn');if(wb)wb.textContent=wx[weather].i+' '+wx[weather].n+' ↻';setText('weatherText',wx[weather].i+' '+wx[weather].n)}
-function pick(px,py){let best=null,bd=1e9;for(let [k,t] of blocks){let [x,y,z]=k.split(',').map(Number);let p=project(x+.5,y+.5,z+.5),d=(p[0]-px)**2+(p[1]-py)**2;if(d<bd){bd=d;best={x,y,z,t}}}return bd<Math.min(W,H)**2*.018?best:null}
-function topBlock(x,z){for(let y=HMAX-1;y>=0;y--){let t=get(x,y,z);if(t)return{x,y,z,t}}return null}
+function pointInPoly(px,py,pts){let inside=false;for(let i=0,j=pts.length-1;i<pts.length;j=i++){const a=pts[i],b=pts[j];if(((a[1]>py)!==(b[1]>py))&&(px<(b[0]-a[0])*(py-a[1])/(b[1]-a[1]+1e-9)+a[0]))inside=!inside}return inside}
+function pick(px,py){
+ let best=null,bestDepth=-Infinity,bestDist=Infinity;
+ for(let [k,t] of blocks){const [x,y,z]=k.split(',').map(Number);
+  const top=[project(x,y+1,z),project(x+1,y+1,z),project(x+1,y+1,z+1),project(x,y+1,z+1)];
+  if(pointInPoly(px,py,top)){const depth=project(x+.5,y+.5,z+.5)[1],dist=(project(x+.5,y+1,z+.5)[0]-px)**2+(project(x+.5,y+1,z+.5)[1]-py)**2;
+   if(depth>bestDepth||(depth===bestDepth&&dist<bestDist)){best={x,y,z,t};bestDepth=depth;bestDist=dist}
+  }
+ }
+ if(best)return best;
+ for(let [k,t] of blocks){let [x,y,z]=k.split(',').map(Number);let p=project(x+.5,y+.5,z+.5),d=(p[0]-px)**2+(p[1]-py)**2;if(d<bestDist){bestDist=d;best={x,y,z,t}}}
+ return bestDist<Math.min(W,H)**2*.008?best:null
+}
+function inBrush(dx,dy,dz){return brushShape==='sphere'?dx*dx+dy*dy+dz*dz<=brushRadius*brushRadius+.25:Math.max(Math.abs(dx),Math.abs(dy),Math.abs(dz))<=brushRadius}
 function stamp(cx,cz,baseY=0){
- const startX=cx-Math.floor(brush/2),startZ=cz-Math.floor(brush/2);
- for(let z=startZ;z<startZ+brush;z++)for(let x=startX;x<startX+brush;x++){
-  if(x<0||x>=N||z<0||z>=N)continue;
-  const top=topBlock(x,z);
-  if(tool==='lower'||tool==='remove'){if(top&&top.y>0){remove(x,top.y,z);if(['dirt','sand','stone'].includes(top.t))falling.push({x,y:top.y,z,t:top.t,vy:0,life:1});if(top.t==='grass'&&top.y>1)put(x,top.y-1,z,'dirt')}}
-  else if(tool==='raise'){const y=top?top.y+1:1;if(y<HMAX)put(x,y,z,'dirt')}
-  else if(tool==='level'){const target=Math.max(1,Math.min(HMAX-1,baseY));if(top){if(top.y>target){for(let y=top.y;y>target;y--)remove(x,y,z)}else if(top.y<target){for(let y=top.y+1;y<=target;y++)put(x,y,z,'dirt')}put(x,target,z,'grass')}else put(x,target,z,'grass')}
-  else if(tool==='source')fluids.set(KEY(x,(top?top.y:0)+1,z),1);
-  else if(tool==='drain'){fluids.delete(KEY(x,(top?top.y:0)+1,z));drained++}
+ const center=pick(project(cx+.5,baseY+.5,cz+.5)[0],project(cx+.5,baseY+.5,cz+.5)[1]);
+ const cy=center?center.y:baseY;
+ if(tool==='lower'||tool==='remove'){
+  for(let z=cz-brushRadius;z<=cz+brushRadius;z++)for(let x=cx-brushRadius;x<=cx+brushRadius;x++)for(let y=Math.max(1,cy-brushRadius);y<=Math.min(HMAX-1,cy+brushRadius);y++){
+   if(!inside(x,y,z)||!inBrush(x-cx,y-cy,z-cz))continue;const t=get(x,y,z);if(!t)continue;remove(x,y,z);if(['dirt','sand','stone'].includes(t))falling.push({x,y,z,t,vy:0,life:1});
+  }
+ }else if(tool==='raise'){
+  for(let z=cz-brushRadius;z<=cz+brushRadius;z++)for(let x=cx-brushRadius;x<=cx+brushRadius;x++)for(let y=Math.max(1,cy-brushRadius);y<=Math.min(HMAX-1,cy+brushRadius);y++){
+   if(inside(x,y,z)&&inBrush(x-cx,y-cy,z-cz)&&!get(x,y,z))put(x,y,z,'dirt');
+  }
+ }else if(tool==='level'){
+  for(let z=cz-brushRadius;z<=cz+brushRadius;z++)for(let x=cx-brushRadius;x<=cx+brushRadius;x++){if(x<0||x>=N||z<0||z>=N||!inBrush(x-cx,0,z-cz))continue;const top=topBlock(x,z),target=Math.max(1,Math.min(HMAX-1,cy));if(top){for(let y=top.y;y>target;y--)remove(x,y,z);for(let y=top.y+1;y<=target;y++)put(x,y,z,'dirt');put(x,target,z,'grass')}else put(x,target,z,'grass')}
+ }else if(tool==='source'||tool==='drain'){
+  for(let z=cz-brushRadius;z<=cz+brushRadius;z++)for(let x=cx-brushRadius;x<=cx+brushRadius;x++)if(inside(x,0,z)&&inBrush(x-cx,0,z-cz)){const top=topBlock(x,z),k=KEY(x,(top?top.y:0)+1,z);if(tool==='source')fluids.set(k,1);else{fluids.delete(k);drained++}}
  }
 }
-function actAt(px,py){let b=pick(px,py);if(!b)return;if(tool==='inspect'){toast(b.t+' 方塊｜高度 '+b.y);return}if(tool==='rain'){weather=3;toast('開始降雨');return}stamp(b.x,b.z,b.y);draw()}
-function drawBrush(){if(!drag||!['lower','remove','raise','level'].includes(tool))return;const b=pick(drag.x,drag.y);if(!b)return;const startX=b.x-Math.floor(brush/2),startZ=b.z-Math.floor(brush/2);ctx.save();ctx.strokeStyle='#5ce8d4';ctx.lineWidth=2;ctx.fillStyle='rgba(92,232,212,.14)';for(let z=startZ;z<startZ+brush;z++)for(let x=startX;x<startX+brush;x++){if(x<0||x>=N||z<0||z>=N)continue;const top=topBlock(x,z),y=top?top.y+1:0;face([project(x,y,z),project(x+1,y,z),project(x+1,y,z+1),project(x,y,z+1)],'rgba(92,232,212,.13)','#5ce8d4')}ctx.restore()}
-function topBlock(x,z){for(let y=HMAX-1;y>=0;y--){let t=get(x,y,z);if(t)return{x,y,z,t}}return null}
+function actAt(px,py){const b=pick(px,py);if(!b)return;if(tool==='inspect'){toast(b.t+' 方塊｜高度 '+b.y);return}if(tool==='rain'){weather=3;toast('開始降雨');return}stamp(b.x,b.z,b.y);draw()}
+function drawBrush(){
+ if(!drag||!['lower','remove','raise','level','source','drain'].includes(tool))return;const b=pick(drag.x,drag.y);if(!b)return;
+ ctx.save();ctx.strokeStyle='#5ce8d4';ctx.lineWidth=2;ctx.fillStyle='rgba(92,232,212,.17)';
+ for(let z=b.z-brushRadius;z<=b.z+brushRadius;z++)for(let x=b.x-brushRadius;x<=b.x+brushRadius;x++){
+  if(x<0||x>=N||z<0||z>=N||!inBrush(x-b.x,0,z-b.z))continue;const top=topBlock(x,z),y=top?top.y+1:0;
+  face([project(x,y,z),project(x+1,y,z),project(x+1,y,z+1),project(x,y,z+1)],'rgba(92,232,212,.13)','#5ce8d4');
+ }ctx.restore()
+}
 function physics(dt){let step=Math.min(.08,dt)*speed;
  // Gravity: unsupported loose blocks fall one voxel at a time and may land on cave roofs/floors.
  for(let z=0;z<N;z++)for(let x=0;x<N;x++)for(let y=1;y<HMAX;y++){let t=get(x,y,z);if(!t||!['sand','dirt'].includes(t)||get(x,y-1,z))continue;let below=waterAt(x,y-1,z);if(Math.random()<Math.min(.9,step*8)){remove(x,y,z);if(below>.1)fluids.set(KEY(x,y-1,z),Math.max(0,below-.2));else put(x,y-1,z,t);}}
@@ -74,11 +97,12 @@ function save(){localStorage.setItem('digflow-voxel-save',JSON.stringify({blocks
 function load(){try{let s=JSON.parse(localStorage.getItem('digflow-voxel-save'));blocks=new Map(s.blocks);fluids=new Map(s.fluids);weather=s.weather;day=s.day;hour=s.hour;evap=s.evap;drained=s.drained;harvest=s.harvest;ui();draw();toast('讀檔完成')}catch(e){toast('找不到存檔')}}
 let lastStamp=null;
 canvas.style.touchAction='none';
-canvas.addEventListener('pointerdown',e=>{const b=pick(e.clientX,e.clientY);drag={x:e.clientX,y:e.clientY,px:e.clientX,py:e.clientY,moved:false,button:e.button,editing:e.button===0&&!!b&&['lower','remove','raise','level'].includes(tool)};lastStamp=null;canvas.setPointerCapture(e.pointerId);if(drag.editing&&b){stamp(b.x,b.z,b.y);lastStamp={x:b.x,z:b.z,y:b.y};draw()}});
+canvas.addEventListener('pointerdown',e=>{const b=pick(e.clientX,e.clientY);if(e.target.closest&&e.target.closest('.panel,button,input,select,textarea,#toolDock,#moreTools'))return;drag={x:e.clientX,y:e.clientY,px:e.clientX,py:e.clientY,moved:false,button:e.button,editing:e.button===0&&!!b&&['lower','remove','raise','level','source','drain'].includes(tool)};lastStamp=null;canvas.setPointerCapture(e.pointerId);if(drag.editing&&b){stamp(b.x,b.z,b.y);lastStamp={x:b.x,z:b.z,y:b.y};draw()}});
 canvas.addEventListener('pointermove',e=>{if(!drag)return;let dx=e.clientX-drag.px,dy=e.clientY-drag.py;if(Math.abs(e.clientX-drag.x)+Math.abs(e.clientY-drag.y)>5)drag.moved=true;if(drag.editing){const b=pick(e.clientX,e.clientY);if(b){if(!lastStamp){stamp(b.x,b.z,b.y);lastStamp={x:b.x,z:b.z,y:b.y}}else{const steps=Math.max(Math.abs(b.x-lastStamp.x),Math.abs(b.z-lastStamp.z),1);for(let i=1;i<=steps;i++){const x=Math.round(lastStamp.x+(b.x-lastStamp.x)*i/steps),z=Math.round(lastStamp.z+(b.z-lastStamp.z)*i/steps);stamp(x,z,b.y)}lastStamp={x:b.x,z:b.z,y:b.y}}}drag.x=e.clientX;drag.y=e.clientY;drag.px=e.clientX;drag.py=e.clientY;draw();return}if(drag.moved){if(drag.button===2){panX+=dx;panY+=dy}else{rot+=dx*.008;panY+=dy*.18}drag.px=e.clientX;drag.py=e.clientY;draw()}});
 canvas.addEventListener('pointerup',e=>{if(drag&&!drag.moved&&!drag.editing)actAt(e.clientX,e.clientY);drag=null;lastStamp=null;draw()});canvas.addEventListener('pointercancel',()=>{drag=null;lastStamp=null;draw()});canvas.addEventListener('contextmenu',e=>e.preventDefault());canvas.addEventListener('wheel',e=>{scale=Math.max(.55,Math.min(2.2,scale*(e.deltaY>0?.92:1.08)));draw();e.preventDefault()},{passive:false});
 document.querySelectorAll('[data-tool]').forEach(b=>b.addEventListener('click',()=>{tool=b.dataset.tool;drag=null;lastStamp=null;document.querySelectorAll('[data-tool]').forEach(v=>v.classList.toggle('active',v.dataset.tool===tool));toast('工具：'+b.textContent)}));
-document.querySelectorAll('[data-brush]').forEach(b=>b.addEventListener('click',()=>{brush=+b.dataset.brush;document.querySelectorAll('[data-brush]').forEach(v=>v.classList.toggle('active',v===b));draw()}));
+document.querySelectorAll('[data-radius]').forEach(b=>b.addEventListener('click',()=>{brushRadius=+b.dataset.radius;document.querySelectorAll('[data-radius]').forEach(v=>v.classList.toggle('active',v===b));draw()}));
+document.querySelectorAll('[data-shape]').forEach(b=>b.addEventListener('click',()=>{brushShape=b.dataset.shape;document.querySelectorAll('[data-shape]').forEach(v=>v.classList.toggle('active',v===b));draw()}));
 document.querySelectorAll('[data-speed]').forEach(b=>b.addEventListener('click',()=>{speed=+b.dataset.speed;document.querySelectorAll('[data-speed]').forEach(v=>v.classList.toggle('active',v===b))}));
 let weatherBtn=document.querySelector('#weatherBtn');if(weatherBtn)weatherBtn.onclick=()=>{weather=(weather+1)%wx.length;ui();draw()};
 let pauseBtn=document.querySelector('#pause');if(pauseBtn)pauseBtn.onclick=()=>{paused=!paused;pauseBtn.textContent=paused?'▶':'Ⅱ'};
