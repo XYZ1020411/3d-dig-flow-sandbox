@@ -93,8 +93,11 @@ function physics(dt){let step=Math.min(.08,dt)*speed;
  for(let i=falling.length-1;i>=0;i--){let f=falling[i];f.vy-=step*7;f.y+=f.vy*step;let below=Math.floor(f.y-.15);if(below>=0&&get(f.x,below,f.z)){if(inside(f.x,Math.max(0,below+1),f.z)&&!get(f.x,below+1,f.z))put(f.x,below+1,f.z,f.t);falling.splice(i,1)}else if(f.y<=0){put(f.x,0,f.z,f.t);falling.splice(i,1)}else if(f.life--<0)falling.splice(i,1)}
  if(weather>=3&&Math.random()<step*20){let x=Math.random()*N|0,z=Math.random()*N|0,b=topBlock(x,z);if(b){let k=KEY(x,b.y+1,z);if(!get(x,b.y+1,z))fluids.set(k,Math.min(1,waterAt(x,b.y+1,z)+.12))}}
 }
-function save(){localStorage.setItem('digflow-voxel-save',JSON.stringify({blocks:[...blocks],fluids:[...fluids],weather,day,hour,evap,drained,harvest}));toast('方塊世界已存檔')}
-function load(){try{let s=JSON.parse(localStorage.getItem('digflow-voxel-save'));blocks=new Map(s.blocks);fluids=new Map(s.fluids);weather=s.weather;day=s.day;hour=s.hour;evap=s.evap;drained=s.drained;harvest=s.harvest;ui();draw();toast('讀檔完成')}catch(e){toast('找不到存檔')}}
+function exportState(){return {version:1,blocks:[...blocks],fluids:[...fluids],moist:[...moist],weather,day,hour,evap,drained,harvest}}
+function importState(s,quiet=false){if(!s||!Array.isArray(s.blocks)||!Array.isArray(s.fluids))throw new Error('存檔格式錯誤');blocks=new Map(s.blocks);fluids=new Map(s.fluids);moist=new Map(s.moist||[]);weather=Number.isFinite(s.weather)?s.weather:0;day=Number.isFinite(s.day)?s.day:1;hour=Number.isFinite(s.hour)?s.hour:8;evap=Number.isFinite(s.evap)?s.evap:0;drained=Number.isFinite(s.drained)?s.drained:0;harvest=Number.isFinite(s.harvest)?s.harvest:0;ui();draw();if(!quiet)toast('世界載入完成')}
+function save(){localStorage.setItem('digflow-voxel-save',JSON.stringify(exportState()));toast('本機存檔完成');if(window.DigFlowCloud)window.DigFlowCloud.queueAutosave()}
+function load(){try{importState(JSON.parse(localStorage.getItem('digflow-voxel-save')))}catch(e){toast('找不到本機存檔')}}
+window.DigFlowWorld={exportState,importState,redraw:draw,notify:s=>toast(s)};
 let lastStamp=null;
 canvas.style.touchAction='none';
 canvas.addEventListener('pointerdown',e=>{const b=pick(e.clientX,e.clientY);if(e.target.closest&&e.target.closest('.panel,button,input,select,textarea,#toolDock,#moreTools'))return;drag={x:e.clientX,y:e.clientY,px:e.clientX,py:e.clientY,moved:false,button:e.button,editing:e.button===0&&!!b&&['lower','remove','raise','level','source','drain'].includes(tool)};lastStamp=null;canvas.setPointerCapture(e.pointerId);if(drag.editing&&b){stamp(b.x,b.z,b.y);lastStamp={x:b.x,z:b.z,y:b.y};draw()}});
