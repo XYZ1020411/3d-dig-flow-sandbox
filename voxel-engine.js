@@ -30,7 +30,7 @@ function draw(){let g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,weather
  for(let b of list)cubeFaces(b.x,b.y,b.z,b.t);
  for(let f of falling){let p=project(f.x+.5,f.y+.5,f.z+.5),u=Math.min(W/(N*1.15),H/(N*.85))*scale;ctx.fillStyle=colors[f.t]||colors.dirt;ctx.fillRect(p[0]-u*.2,p[1]-u*.2,u*.4,u*.4)}
  for(let [k,w] of fluids){if(w<.04)continue;let [x,y,z]=k.split(',').map(Number);if(!get(x,y,z)){let p=[project(x,y+w*.8,z),project(x+1,y+w*.8,z),project(x+1,y+w*.8,z+1),project(x,y+w*.8,z+1)];face(p,'rgba(43,163,222,.72)','#b8edff55')}}
- if(weather>=3){ctx.strokeStyle='#e4f7ff88';for(let i=0;i<weather===4?90:35;i++){let x=(i*97+performance.now()*.2)%W,y=(i*61+performance.now()*.5)%H;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-3,y+9);ctx.stroke()}}
+ if(weather>=3){ctx.strokeStyle='#e4f7ff88';for(let i=0;i<(weather===4?90:35);i++){let x=(i*97+performance.now()*.2)%W,y=(i*61+performance.now()*.5)%H;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-3,y+9);ctx.stroke()}}
  const total=[...fluids.values()].reduce((a,b)=>a+b,0);setText('waterVol',total.toFixed(1));setText('evapVol',evap.toFixed(1));setText('drainVol',drained.toFixed(1));setText('harvest',harvest);setText('moisture',Math.round([...moist.values()].reduce((a,b)=>a+b,0)/Math.max(1,moist.size)*100)||35)}
 function setText(id,t){let e=document.getElementById(id);if(e)e.textContent=t}
 function toast(s){let e=document.getElementById('toast');if(e){e.textContent=s;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1700)}}
@@ -38,8 +38,8 @@ function ui(){setText('day','第 '+day+' 日');let t=String(hour|0).padStart(2,'
 function pick(px,py){let best=null,bd=1e9;for(let [k,t] of blocks){let [x,y,z]=k.split(',').map(Number);let p=project(x+.5,y+.5,z+.5),d=(p[0]-px)**2+(p[1]-py)**2;if(d<bd){bd=d;best={x,y,z,t}}}return bd<Math.min(W,H)**2*.018?best:null}
 function topBlock(x,z){for(let y=HMAX-1;y>=0;y--){let t=get(x,y,z);if(t)return{x,y,z,t}}return null}
 function stamp(cx,cz,baseY=0){
- const r=Math.max(0,Math.floor((brush-1)/2));
- for(let z=cz-r;z<=cz+r;z++)for(let x=cx-r;x<=cx+r;x++){
+ const startX=cx-Math.floor(brush/2),startZ=cz-Math.floor(brush/2);
+ for(let z=startZ;z<startZ+brush;z++)for(let x=startX;x<startX+brush;x++){
   if(x<0||x>=N||z<0||z>=N)continue;
   const top=topBlock(x,z);
   if(tool==='lower'||tool==='remove'){if(top&&top.y>0){remove(x,top.y,z);if(['dirt','sand','stone'].includes(top.t))falling.push({x,y:top.y,z,t:top.t,vy:0,life:1});if(top.t==='grass'&&top.y>1)put(x,top.y-1,z,'dirt')}}
@@ -50,7 +50,7 @@ function stamp(cx,cz,baseY=0){
  }
 }
 function actAt(px,py){let b=pick(px,py);if(!b)return;if(tool==='inspect'){toast(b.t+' 方塊｜高度 '+b.y);return}if(tool==='rain'){weather=3;toast('開始降雨');return}stamp(b.x,b.z,b.y);draw()}
-function drawBrush(){if(!drag||!['lower','remove','raise','level'].includes(tool))return;const b=pick(drag.x,drag.y);if(!b)return;const r=Math.max(0,Math.floor((brush-1)/2));ctx.save();ctx.strokeStyle='#5ce8d4';ctx.lineWidth=2;ctx.fillStyle='rgba(92,232,212,.14)';for(let z=b.z-r;z<=b.z+r;z++)for(let x=b.x-r;x<=b.x+r;x++){if(x<0||x>=N||z<0||z>=N)continue;const top=topBlock(x,z),y=top?top.y+1:0;face([project(x,y,z),project(x+1,y,z),project(x+1,y,z+1),project(x,y,z+1)],'rgba(92,232,212,.13)','#5ce8d4')}ctx.restore()}
+function drawBrush(){if(!drag||!['lower','remove','raise','level'].includes(tool))return;const b=pick(drag.x,drag.y);if(!b)return;const startX=b.x-Math.floor(brush/2),startZ=b.z-Math.floor(brush/2);ctx.save();ctx.strokeStyle='#5ce8d4';ctx.lineWidth=2;ctx.fillStyle='rgba(92,232,212,.14)';for(let z=startZ;z<startZ+brush;z++)for(let x=startX;x<startX+brush;x++){if(x<0||x>=N||z<0||z>=N)continue;const top=topBlock(x,z),y=top?top.y+1:0;face([project(x,y,z),project(x+1,y,z),project(x+1,y,z+1),project(x,y,z+1)],'rgba(92,232,212,.13)','#5ce8d4')}ctx.restore()}
 function topBlock(x,z){for(let y=HMAX-1;y>=0;y--){let t=get(x,y,z);if(t)return{x,y,z,t}}return null}
 function physics(dt){let step=Math.min(.08,dt)*speed;
  // Gravity: unsupported loose blocks fall one voxel at a time and may land on cave roofs/floors.
